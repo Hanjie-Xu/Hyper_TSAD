@@ -1,0 +1,10 @@
+{
+  "threshold": 0.712096,
+  "precision": 0.678832,
+  "recall": 0.206667,
+  "f1": 0.316865,
+  "roc_auc": 0.676824,
+  "pr_auc": 0.376626,
+  "num_samples": 3937,
+  "num_anomalies": 450
+}
