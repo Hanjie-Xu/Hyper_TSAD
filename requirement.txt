@@ -1,0 +1,15 @@
+torch==2.1.0+cu118
+torchdata==0.7.0
+dgl==2.2.1+cu118
+numpy==1.24.4
+scipy==1.10.1
+networkx==3.1
+tqdm==4.66.1
+pyyaml==6.0.1
+pydantic==2.13.4
+scikit-learn==1.3.2
+matplotlib==3.7.5
+pandas==2.0.3
+seaborn==0.13.2
+tensorboard==2.15.1
+jupyter_core==5.9.1
