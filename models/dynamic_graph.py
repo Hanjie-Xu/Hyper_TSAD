@@ -70,8 +70,16 @@ class DynamicHypergraphBuilder:
         Args:
             node_feat: [N, D] node feature matrix.
         Returns:
-            H: [N, N] incidence matrix (float, on the same device as node_feat).
-               H[n, e] = 1 if node n is a member of hyperedge e, else 0.
+            H: [N, N] soft incidence matrix (float, on the same device as node_feat).
+               H[n, e] is a softmax-normalised similarity weight; non-members are 0.
+               Self-hyperedge diagonal is kept at 1.0.
+
+        Soft incidence (vs. hard 0/1):
+          - Incidence weights are proportional to cosine/dot-product similarity,
+            normalised via softmax over the k nearest neighbours per hyperedge.
+          - This makes the graph construction path differentiable w.r.t. feature
+            magnitudes (though not w.r.t. neighbour identity due to topk).
+          - Provides a more expressive aggregation than uniform hard weights.
         """
         N = node_feat.shape[0]
         k = min(self.topk, N - 1)
@@ -82,16 +90,23 @@ class DynamicHypergraphBuilder:
         else:
             feat = node_feat
 
-        sim = torch.matmul(feat, feat.T)  # [N, N]
-        sim.fill_diagonal_(-1e9)          # exclude self when finding neighbours
+        sim = torch.matmul(feat, feat.T)  # [N, N] – full similarity matrix
 
-        _, topk_idx = torch.topk(sim, k, dim=1)  # [N, k]
+        # Use a masked copy for topk selection (exclude self)
+        sim_masked = sim.clone()
+        sim_masked.fill_diagonal_(-1e9)
+        _, topk_idx = torch.topk(sim_masked, k, dim=1)  # [N, k]
 
-        # Build hard incidence matrix
-        H = torch.zeros(N, N, dtype=node_feat.dtype, device=node_feat.device)
-        H.fill_diagonal_(1.0)  # every node belongs to its own hyperedge
-        # each row e: mark k neighbours as members of hyperedge e
+        # --- Build soft incidence via softmax over neighbour similarities ---
+        # row_idx[e, j] = e  →  used to index column (hyperedge axis)
         row_idx = torch.arange(N, device=node_feat.device).unsqueeze(1).expand(N, k)
-        H[topk_idx, row_idx] = 1.0  # H[neighbour_n, edge_e] = 1
+
+        # Gather sim[neighbour_n, edge_e] for each (edge, member) pair
+        member_sims = sim[topk_idx, row_idx]   # [N, k]
+        soft_weights = torch.softmax(member_sims, dim=1)  # [N, k], sum=1 per edge
+
+        H = torch.zeros(N, N, dtype=node_feat.dtype, device=node_feat.device)
+        H.fill_diagonal_(1.0)           # self-loop: node always in its own hyperedge
+        H[topk_idx, row_idx] = soft_weights  # H[member_n, edge_e] = soft weight
 
         return H  # [N, E=N]

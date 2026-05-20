@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 from tqdm import tqdm
@@ -14,7 +16,9 @@ class Trainer:
         w_graph_diff=0.01,
         w_graph_sparse=0.01,
         score_aggregation='topk',
-        score_topk_ratio=0.2
+        score_topk_ratio=0.2,
+        score_normalize=False,
+        score_horizons=3,
     ):
 
         self.model = model
@@ -26,7 +30,11 @@ class Trainer:
         self.w_graph_sparse = float(w_graph_sparse)
         self.score_aggregation = score_aggregation
         self.score_topk_ratio = float(score_topk_ratio)
+        self.score_normalize = bool(score_normalize)
+        self.score_horizons = max(1, int(score_horizons))
         self.global_step = 0
+        self._calib_mean = None
+        self._calib_std = None
 
         if self.score_aggregation not in {'mean', 'topk'}:
             raise ValueError(
@@ -42,14 +50,57 @@ class Trainer:
         return torch.mean(A_cur)
 
     def _window_anomaly_score(self, pred_delta, true_delta):
+        # residual: [B, N] – mean over the (single) time dimension
         residual = torch.abs(pred_delta - true_delta).mean(dim=1)
+
+        # Per-variable Z-score normalisation using calibration statistics.
+        # This prevents high-variance variables from dominating the aggregate score
+        # and makes thresholding on calibration data more reliable.
+        if self.score_normalize and self._calib_mean is not None:
+            calib_mean = self._calib_mean.to(residual.device)
+            calib_std = self._calib_std.to(residual.device)
+            residual = (residual - calib_mean) / calib_std
+            residual = residual.clamp(min=0.0)  # keep only above-baseline deviations
+
         if self.score_aggregation == 'mean':
             return residual.mean(dim=1)
 
         num_vars = residual.shape[1]
-        k = max(1, int(torch.ceil(torch.tensor(num_vars * self.score_topk_ratio)).item()))
+        k = max(1, math.ceil(num_vars * self.score_topk_ratio))
         topk_values, _ = torch.topk(residual, k=k, dim=1)
         return topk_values.mean(dim=1)
+
+    @torch.no_grad()
+    def calibrate(self, loader):
+        """Compute per-variable residual mean/std on normal training windows.
+
+        Must be called after training, before inference, when score_normalize=True.
+        Iterates over all horizons to match the multi-horizon scoring used at test time.
+        """
+        self.model.eval()
+        all_residuals = []
+        for batch in loader:
+            x = batch['x'].to(self.device)
+            T = x.shape[1]
+            for h in range(1, self.score_horizons + 1):
+                if T - h < 1:
+                    break
+                x_hist = x[:, :T - h, :]
+                y_true = x[:, T - h: T - h + 1, :]
+                z_pred, _ = self.model(
+                    x_hist,
+                    force_graph_rebuild=True,
+                    update_graph_cache=False,
+                )
+                x_last = x_hist[:, -1:, :]
+                pred_delta = z_pred - x_last
+                true_delta = y_true - x_last
+                residual = torch.abs(pred_delta - true_delta).mean(dim=1)  # [B, N]
+                all_residuals.append(residual.cpu())
+
+        all_residuals = torch.cat(all_residuals, dim=0)  # [M, N]
+        self._calib_mean = all_residuals.mean(dim=0)     # [N]
+        self._calib_std = all_residuals.std(dim=0).clamp(min=1e-8)  # [N]
     
     def train_epoch(self, loader):
 
@@ -91,7 +142,16 @@ class Trainer:
             else:
                 loss_graph_diff = torch.zeros(1, device=self.device, dtype=loss_mse.dtype).squeeze(0)
 
-            loss_graph_sparse = self._graph_sparsity(A_cur)
+            # Skip sparsity regularisation for hypergraph mode: the soft incidence
+            # matrix has a well-defined mean (≈ k/N + 1/N), and penalising it would
+            # push membership weights toward zero and degrade aggregation quality.
+            is_hypergraph = (
+                getattr(self.model, 'graph_ablation', '') == 'dynamic_hypergraph'
+            )
+            if is_hypergraph:
+                loss_graph_sparse = torch.zeros(1, device=self.device, dtype=loss_mse.dtype).squeeze(0)
+            else:
+                loss_graph_sparse = self._graph_sparsity(A_cur)
 
             loss = (
                 self.w_mse * loss_mse
@@ -115,20 +175,36 @@ class Trainer:
     
     @torch.no_grad()
     def inference(self, loader):
+        """Run anomaly scoring over a dataloader.
+
+        Multi-horizon scoring: for each window of size T, predictions are
+        computed for the last `score_horizons` steps (h=1..score_horizons),
+        each using a different-length prefix as history.  Scores are averaged
+        across horizons, giving a more robust estimate than single-step scoring.
+        """
         self.model.eval()
         all_scores = []
         for batch in loader:
             x = batch['x'].to(self.device)
-            x_hist = x[:, :-1, :]
-            y_true = x[:, -1:, :]
-            z_pred, _ = self.model(
-                x_hist,
-                force_graph_rebuild=True,
-                update_graph_cache=False
-            )
-            x_last = x[:, -2:-1, :]
-            pred_delta = z_pred - x_last
-            true_delta = y_true - x_last
-            score = self._window_anomaly_score(pred_delta, true_delta)
+            T = x.shape[1]
+            horizon_scores = []
+            for h in range(1, self.score_horizons + 1):
+                if T - h < 1:
+                    break
+                x_hist = x[:, :T - h, :]
+                y_true = x[:, T - h: T - h + 1, :]
+                z_pred, _ = self.model(
+                    x_hist,
+                    force_graph_rebuild=True,
+                    update_graph_cache=False,
+                )
+                x_last = x_hist[:, -1:, :]
+                pred_delta = z_pred - x_last
+                true_delta = y_true - x_last
+                score_h = self._window_anomaly_score(pred_delta, true_delta)  # [B]
+                horizon_scores.append(score_h)
+
+            # Average across prediction horizons [n_horizons, B] → [B]
+            score = torch.stack(horizon_scores, dim=0).mean(dim=0)
             all_scores.append(score.cpu())
         return torch.cat(all_scores)

@@ -197,11 +197,20 @@ def build_trainer(args, model: ModelPrototype, device: torch.device) -> Tuple[Tr
         w_graph_sparse=args.w_graph_sparse,
         score_aggregation=args.score_aggregation,
         score_topk_ratio=args.score_topk_ratio,
+        score_normalize=args.score_normalize,
+        score_horizons=args.score_horizons,
     )
     return trainer, optimizer
 
 
-def save_checkpoint(path: str, model: ModelPrototype, optimizer: torch.optim.Optimizer, args, num_vars: int) -> None:
+def save_checkpoint(
+    path: str,
+    model: ModelPrototype,
+    optimizer: torch.optim.Optimizer,
+    args,
+    num_vars: int,
+    trainer=None,
+) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ckpt = {
         "model_state": model.state_dict(),
@@ -214,7 +223,13 @@ def save_checkpoint(path: str, model: ModelPrototype, optimizer: torch.optim.Opt
             "graph_update_freq": args.graph_update_freq,
             "graph_similarity_metric": args.graph_similarity_metric,
         },
+        "score_normalize": args.score_normalize,
+        "score_horizons": args.score_horizons,
     }
+    # Persist calibration statistics so eval-only runs are self-contained.
+    if trainer is not None and trainer._calib_mean is not None:
+        ckpt["calib_mean"] = trainer._calib_mean
+        ckpt["calib_std"] = trainer._calib_std
     torch.save(ckpt, path)
 
 
@@ -235,13 +250,17 @@ def train_pipeline(args):
         history.append(float(epoch_loss))
         print(f"Epoch {epoch}/{args.epochs} | loss={epoch_loss:.6f}")
 
+    # Calibrate per-variable score statistics on normal training windows.
+    # This is always run so train_scores reflect the same scoring path used at test time.
+    print("Calibrating score statistics on training data...")
+    trainer.calibrate(train_eval_loader)
     train_scores = trainer.inference(train_eval_loader).numpy()
 
     run_name = args.run_name
     if args.entity:
         run_name = f"{run_name}_{args.entity}"
     ckpt_path = os.path.join(args.save_dir, f"{run_name}.pt")
-    save_checkpoint(ckpt_path, model, optimizer, args, num_vars)
+    save_checkpoint(ckpt_path, model, optimizer, args, num_vars, trainer=trainer)
 
     return {
         "device": device,
@@ -286,6 +305,14 @@ def load_checkpoint_for_eval(args):
 
     trainer, _ = build_trainer(args, model, device)
     _, train_eval_loader, test_loader, test_window_labels = make_dataloaders(args, train_data, test_data, labels)
+
+    # Restore calibration stats from checkpoint if available.
+    if "calib_mean" in ckpt and "calib_std" in ckpt:
+        trainer._calib_mean = ckpt["calib_mean"].to("cpu")
+        trainer._calib_std = ckpt["calib_std"].to("cpu")
+    else:
+        trainer.calibrate(train_eval_loader)
+
     train_scores = trainer.inference(train_eval_loader).numpy()
 
     return {

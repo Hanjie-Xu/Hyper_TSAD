@@ -56,7 +56,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--score_aggregation", type=str, default="topk", choices=["mean", "topk"])
     parser.add_argument("--score_topk_ratio", type=float, default=0.2)
 
+    parser.add_argument(
+        "--threshold_method",
+        type=str,
+        default="pot",
+        choices=["quantile", "pot"],
+        help="Threshold search method for anomaly decision.",
+    )
     parser.add_argument("--threshold_quantile", type=float, default=0.99)
+    parser.add_argument("--pot_init_level", type=float, default=0.98)
+    parser.add_argument("--pot_risk", type=float, default=1e-3)
+    parser.add_argument("--score_normalize", action="store_true", default=False,
+                        help="Normalise per-variable residuals by calibration stats before aggregation.")
+    parser.add_argument("--score_horizons", type=int, default=3,
+                        help="Number of prediction horizons to average for anomaly score (>=1).")
     parser.add_argument("--seed", type=int, default=42)
 
     return parser
