@@ -409,6 +409,9 @@ if __name__ == "__main__":
         graph_ablation=model_args.get("graph_ablation", "dynamic"),
         graph_update_freq=int(model_args.get("graph_update_freq", 1)),
         graph_similarity_metric=model_args.get("graph_similarity_metric", "dot_product"),
+        hypergraph_encoder_type=model_args.get("hypergraph_encoder_type", "conv"),
+        hypergraph_attn_heads=int(model_args.get("hypergraph_attn_heads", 4)),
+        hypergraph_attn_dropout=float(model_args.get("hypergraph_attn_dropout", 0.1)),
     ).to(device)
     model.load_state_dict(ckpt["model_state"])
 

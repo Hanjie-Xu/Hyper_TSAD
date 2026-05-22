@@ -7,7 +7,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from exp_utils import create_exp_structure, generate_exp_name, save_args_json, save_loss_json
+from models.anomaly_transformer import AnomalyTransformerModel
 from models.model_prototype_v1 import ModelPrototype
+from models.tranad import TranADModel
 from trainer.trainer import Trainer
 
 
@@ -139,12 +142,12 @@ def build_pearson_static_graph(train_data: np.ndarray, topk: int) -> dgl.DGLGrap
     return dgl.graph((src, dst), num_nodes=n)
 
 
-def build_model(args, num_vars: int, train_data: np.ndarray, device: torch.device) -> ModelPrototype:
+def _build_hyper_tsad(args, num_vars: int, train_data: np.ndarray) -> ModelPrototype:
     static_graph = None
     if args.graph_ablation == "pearson_static":
         static_graph = build_pearson_static_graph(train_data, args.topk)
 
-    model = ModelPrototype(
+    return ModelPrototype(
         num_vars=num_vars,
         hidden_dim=args.hidden_dim,
         topk=args.topk,
@@ -152,7 +155,33 @@ def build_model(args, num_vars: int, train_data: np.ndarray, device: torch.devic
         graph_update_freq=args.graph_update_freq,
         static_graph=static_graph,
         graph_similarity_metric=args.graph_similarity_metric,
+        hypergraph_encoder_type=args.hypergraph_encoder_type,
+        hypergraph_attn_heads=args.hypergraph_attn_heads,
+        hypergraph_attn_dropout=args.hypergraph_attn_dropout,
     )
+
+
+def build_model(args, num_vars: int, train_data: np.ndarray, device: torch.device):
+    if args.model_name == "tranad":
+        model = TranADModel(
+            num_vars=num_vars,
+            window_size=args.window_size,
+            d_ff=args.tranad_d_ff,
+            dropout=args.tranad_dropout,
+        )
+    elif args.model_name == "anomaly_transformer":
+        model = AnomalyTransformerModel(
+            num_vars=num_vars,
+            window_size=args.window_size - 1,
+            d_model=args.at_d_model,
+            n_heads=args.at_n_heads,
+            e_layers=args.at_e_layers,
+            d_ff=args.at_d_ff,
+            dropout=args.at_dropout,
+            activation=args.at_activation,
+        )
+    else:
+        model = _build_hyper_tsad(args, num_vars, train_data)
     return model.to(device)
 
 
@@ -186,7 +215,7 @@ def make_dataloaders(args, train_data: np.ndarray, test_data: np.ndarray, labels
     return train_loader, train_eval_loader, test_loader, test_window_labels
 
 
-def build_trainer(args, model: ModelPrototype, device: torch.device) -> Tuple[Trainer, torch.optim.Optimizer]:
+def build_trainer(args, model, device: torch.device) -> Tuple[Trainer, torch.optim.Optimizer]:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     trainer = Trainer(
         model=model,
@@ -205,7 +234,7 @@ def build_trainer(args, model: ModelPrototype, device: torch.device) -> Tuple[Tr
 
 def save_checkpoint(
     path: str,
-    model: ModelPrototype,
+    model,
     optimizer: torch.optim.Optimizer,
     args,
     num_vars: int,
@@ -216,12 +245,25 @@ def save_checkpoint(
         "model_state": model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "num_vars": num_vars,
+        "model_name": args.model_name,
         "model_args": {
             "hidden_dim": args.hidden_dim,
             "topk": args.topk,
             "graph_ablation": args.graph_ablation,
             "graph_update_freq": args.graph_update_freq,
             "graph_similarity_metric": args.graph_similarity_metric,
+            "hypergraph_encoder_type": args.hypergraph_encoder_type,
+            "hypergraph_attn_heads": args.hypergraph_attn_heads,
+            "hypergraph_attn_dropout": args.hypergraph_attn_dropout,
+            "window_size": args.window_size,
+            "tranad_d_ff": args.tranad_d_ff,
+            "tranad_dropout": args.tranad_dropout,
+            "at_d_model": args.at_d_model,
+            "at_n_heads": args.at_n_heads,
+            "at_e_layers": args.at_e_layers,
+            "at_d_ff": args.at_d_ff,
+            "at_dropout": args.at_dropout,
+            "at_activation": args.at_activation,
         },
         "score_normalize": args.score_normalize,
         "score_horizons": args.score_horizons,
@@ -256,11 +298,16 @@ def train_pipeline(args):
     trainer.calibrate(train_eval_loader)
     train_scores = trainer.inference(train_eval_loader).numpy()
 
-    run_name = args.run_name
-    if args.entity:
-        run_name = f"{run_name}_{args.entity}"
-    ckpt_path = os.path.join(args.save_dir, f"{run_name}.pt")
-    save_checkpoint(ckpt_path, model, optimizer, args, num_vars, trainer=trainer)
+    # Generate experiment structure with timestamp-based naming
+    exp_name = generate_exp_name(args)
+    exp_paths = create_exp_structure(exp_name, base_dir="experiments")
+    
+    # Save args and loss to experiment directory
+    save_args_json(args, exp_paths["args_path"])
+    save_loss_json(history, exp_paths["loss_path"])
+    
+    # Save checkpoint
+    save_checkpoint(exp_paths["model_path"], model, optimizer, args, num_vars, trainer=trainer)
 
     return {
         "device": device,
@@ -271,8 +318,9 @@ def train_pipeline(args):
         "test_loader": test_loader,
         "test_window_labels": test_window_labels,
         "train_scores": train_scores,
-        "ckpt_path": ckpt_path,
+        "ckpt_path": exp_paths["model_path"],
         "loss_history": history,
+        "exp_paths": exp_paths,
     }
 
 
@@ -286,21 +334,45 @@ def load_checkpoint_for_eval(args):
 
     ckpt = torch.load(args.checkpoint_path, map_location=device)
     num_vars = int(ckpt["num_vars"])
+    model_name = ckpt.get("model_name", getattr(args, "model_name", "hyper_tsad"))
 
     model_args = ckpt.get("model_args", {})
-    static_graph = None
-    if model_args.get("graph_ablation") == "pearson_static":
-        static_graph = build_pearson_static_graph(train_data, int(model_args.get("topk", 5)))
 
-    model = ModelPrototype(
-        num_vars=num_vars,
-        hidden_dim=int(model_args.get("hidden_dim", args.hidden_dim)),
-        topk=int(model_args.get("topk", args.topk)),
-        graph_ablation=model_args.get("graph_ablation", args.graph_ablation),
-        graph_update_freq=int(model_args.get("graph_update_freq", args.graph_update_freq)),
-        static_graph=static_graph,
-        graph_similarity_metric=model_args.get("graph_similarity_metric", args.graph_similarity_metric),
-    ).to(device)
+    if model_name == "tranad":
+        model = TranADModel(
+            num_vars=num_vars,
+            window_size=int(model_args.get("window_size", args.window_size)),
+            d_ff=int(model_args.get("tranad_d_ff", args.tranad_d_ff)),
+            dropout=float(model_args.get("tranad_dropout", args.tranad_dropout)),
+        ).to(device)
+    elif model_name == "anomaly_transformer":
+        model = AnomalyTransformerModel(
+            num_vars=num_vars,
+            window_size=max(1, int(model_args.get("window_size", args.window_size)) - 1),
+            d_model=int(model_args.get("at_d_model", args.at_d_model)),
+            n_heads=int(model_args.get("at_n_heads", args.at_n_heads)),
+            e_layers=int(model_args.get("at_e_layers", args.at_e_layers)),
+            d_ff=int(model_args.get("at_d_ff", args.at_d_ff)),
+            dropout=float(model_args.get("at_dropout", args.at_dropout)),
+            activation=model_args.get("at_activation", args.at_activation),
+        ).to(device)
+    else:
+        static_graph = None
+        if model_args.get("graph_ablation") == "pearson_static":
+            static_graph = build_pearson_static_graph(train_data, int(model_args.get("topk", 5)))
+
+        model = ModelPrototype(
+            num_vars=num_vars,
+            hidden_dim=int(model_args.get("hidden_dim", args.hidden_dim)),
+            topk=int(model_args.get("topk", args.topk)),
+            graph_ablation=model_args.get("graph_ablation", args.graph_ablation),
+            graph_update_freq=int(model_args.get("graph_update_freq", args.graph_update_freq)),
+            static_graph=static_graph,
+            graph_similarity_metric=model_args.get("graph_similarity_metric", args.graph_similarity_metric),
+            hypergraph_encoder_type=model_args.get("hypergraph_encoder_type", args.hypergraph_encoder_type),
+            hypergraph_attn_heads=int(model_args.get("hypergraph_attn_heads", args.hypergraph_attn_heads)),
+            hypergraph_attn_dropout=float(model_args.get("hypergraph_attn_dropout", args.hypergraph_attn_dropout)),
+        ).to(device)
     model.load_state_dict(ckpt["model_state"])
 
     trainer, _ = build_trainer(args, model, device)

@@ -26,6 +26,7 @@ def main() -> None:
     if args.mode in {"train", "both"}:
         run = train_pipeline(args)
         print(f"Training done. Checkpoint saved to: {run['ckpt_path']}")
+        exp_paths = run.get("exp_paths", {})
 
         if args.mode == "both":
             metrics, test_scores = evaluate_model(
@@ -42,21 +43,13 @@ def main() -> None:
             print("Evaluation metrics:")
             print(json.dumps(printable, indent=2))
 
-            os.makedirs(args.save_dir, exist_ok=True)
-            metrics_path = os.path.join(args.save_dir, f"{args.run_name}_metrics.json")
-            with open(metrics_path, "w", encoding="utf-8") as f:
-                json.dump(printable, f, indent=2)
-            print(f"Saved metrics to: {metrics_path}")
-
-            # Persist loss history so standalone plot.py can reload it.
-            loss_path = os.path.join(args.save_dir, f"{args.run_name}_loss.json")
-            with open(loss_path, "w", encoding="utf-8") as f:
-                json.dump(run["loss_history"], f)
-
             # Load raw test data for the sensor-overlay panel.
             _, test_data, _ = load_processed_arrays(
                 args.processed_dir, args.dataset, args.entity
             )
+            
+            # Use experiment-managed plots directory if available
+            plots_dir = exp_paths.get("plots_dir", os.path.join(args.save_dir, "plots"))
             plot_all(
                 loss_history=run["loss_history"],
                 test_scores=test_scores,
@@ -65,9 +58,18 @@ def main() -> None:
                 test_data=test_data,
                 var_index=0,
                 title_prefix=args.dataset,
-                save_dir=os.path.join(args.save_dir, "plots"),
+                save_dir=plots_dir,
                 run_name=args.run_name,
             )
+            
+            print(f"Plots saved to: {plots_dir}")
+            if exp_paths:
+                print(f"Experiment structure:")
+                print(f"  Root: {exp_paths.get('root')}")
+                print(f"  Args: {exp_paths.get('args_path')}")
+                print(f"  Loss: {exp_paths.get('loss_path')}")
+                print(f"  Model: {exp_paths.get('model_path')}")
+                print(f"  Plots: {exp_paths.get('plots_dir')}")
 
     elif args.mode == "eval":
         run = load_checkpoint_for_eval(args)

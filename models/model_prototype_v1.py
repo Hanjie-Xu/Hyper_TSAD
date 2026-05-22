@@ -6,6 +6,7 @@ import dgl.nn as dglnn
 
 from models.dynamic_graph import DynamicGraphBuilder, DynamicHypergraphBuilder
 from layers.hypergraph_conv import HypergraphConv
+from layers.hypergraph_attn import HypergraphAttention
 
 
 class VariableEncoder(nn.Module):
@@ -75,11 +76,29 @@ class GraphEncoder(nn.Module):
         return h
 
 class HypergraphEncoder(nn.Module):
-    """Two-layer HGNN encoder with residual connection."""
+    """Hypergraph encoder with selectable backend and residual connection."""
 
-    def __init__(self, hidden_dim: int):
+    def __init__(
+        self,
+        hidden_dim: int,
+        encoder_type: str = 'conv',
+        attn_heads: int = 4,
+        attn_dropout: float = 0.1,
+    ):
         super().__init__()
-        self.conv = HypergraphConv(hidden_dim, hidden_dim)
+        if encoder_type not in {'conv', 'attn'}:
+            raise ValueError(f"encoder_type must be one of {{'conv', 'attn'}}, got {encoder_type}")
+        self.encoder_type = encoder_type
+        if encoder_type == 'attn':
+            self.conv = HypergraphAttention(
+                in_dim=hidden_dim,
+                out_dim=hidden_dim,
+                num_heads=attn_heads,
+                dropout=attn_dropout,
+                concat=False,
+            )
+        else:
+            self.conv = HypergraphConv(hidden_dim, hidden_dim)
         self.norm = nn.LayerNorm(hidden_dim)
         self.act = nn.ReLU()
 
@@ -120,7 +139,10 @@ class ModelPrototype(nn.Module):
         graph_ablation='dynamic',
         graph_update_freq=1,
         static_graph=None,
-        graph_similarity_metric='dot_product'
+        graph_similarity_metric='dot_product',
+        hypergraph_encoder_type='conv',
+        hypergraph_attn_heads=4,
+        hypergraph_attn_dropout=0.1,
     ):
         super().__init__()
 
@@ -139,6 +161,10 @@ class ModelPrototype(nn.Module):
         if graph_update_freq < 1:
             raise ValueError(
                 f'graph_update_freq must be >= 1, got {graph_update_freq}'
+            )
+        if hypergraph_encoder_type not in {'conv', 'attn'}:
+            raise ValueError(
+                f"hypergraph_encoder_type must be one of {{'conv', 'attn'}}, got {hypergraph_encoder_type}"
             )
 
         self.num_vars = num_vars
@@ -163,7 +189,12 @@ class ModelPrototype(nn.Module):
             topk=topk,
             similarity_metric=graph_similarity_metric
         )
-        self.hypergraph_encoder = HypergraphEncoder(hidden_dim=hidden_dim)
+        self.hypergraph_encoder = HypergraphEncoder(
+            hidden_dim=hidden_dim,
+            encoder_type=hypergraph_encoder_type,
+            attn_heads=hypergraph_attn_heads,
+            attn_dropout=hypergraph_attn_dropout,
+        )
         self.prediction_head = PredictionHead(
             hidden_dim=hidden_dim,
             pred_dim=1
