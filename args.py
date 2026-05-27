@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model_name",
         type=str,
         default="hyper_tsad",
-        choices=["hyper_tsad", "tranad", "anomaly_transformer"],
+        choices=["hyper_tsad", "hyper_tsad_v15", "hyper_tsad_v15t", "hyper_tsad_v15t1", "tranad", "anomaly_transformer"],
         help="Model family to train/evaluate.",
     )
 
@@ -60,6 +60,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--hypergraph_attn_heads", type=int, default=4)
     parser.add_argument("--hypergraph_attn_dropout", type=float, default=0.1)
+    parser.add_argument("--temporal_kernel_size", type=int, default=3,
+                        help="Causal conv kernel size for hyper_tsad_v15 temporal encoder.")
+    parser.add_argument("--temporal_num_layers", type=int, default=3,
+                        help="Number of residual causal conv blocks in hyper_tsad_v15.")
+    parser.add_argument("--temporal_dropout", type=float, default=0.1,
+                        help="Dropout used in hyper_tsad_v15 temporal encoder.")
+    parser.add_argument("--temporal_dilation_base", type=int, default=2,
+                        help="Dilation base for causal conv blocks in hyper_tsad_v15.")
+    parser.add_argument("--hypergraph_transformer_heads", type=int, default=4,
+                        help="Number of heads for hypergraph transformer in hyper_tsad_v15t.")
+    parser.add_argument("--hypergraph_transformer_layers", type=int, default=2,
+                        help="Number of transformer blocks for hypergraph transformer in hyper_tsad_v15t.")
+    parser.add_argument("--hypergraph_transformer_dropout", type=float, default=0.1,
+                        help="Dropout for hypergraph transformer in hyper_tsad_v15t.")
+    parser.add_argument("--hypergraph_transformer_mlp_ratio", type=float, default=2.0,
+                        help="MLP expansion ratio for hypergraph transformer in hyper_tsad_v15t.")
+    parser.add_argument("--hypergraph_transformer_allow_node_to_node", action="store_true", default=False,
+                        help="Allow node-to-node attention in hypergraph transformer.")
+    parser.add_argument("--hypergraph_transformer_allow_edge_to_edge", action="store_true", default=False,
+                        help="Allow hyperedge-to-hyperedge attention in hypergraph transformer.")
 
     # TranAD baseline params
     parser.add_argument("--tranad_d_ff", type=int, default=256)

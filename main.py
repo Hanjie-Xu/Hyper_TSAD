@@ -1,5 +1,7 @@
 import json
 import os
+import time
+from datetime import datetime, timezone
 
 from args import parse_args
 from evaluation import evaluate_model
@@ -20,6 +22,32 @@ def _to_printable_metrics(metrics):
     return out
 
 
+def _resolve_tests_jsonl_path(args, run, exp_paths):
+    if exp_paths and exp_paths.get("tests_path"):
+        return exp_paths["tests_path"]
+
+    ckpt_path = None
+    if isinstance(run, dict):
+        ckpt_path = run.get("ckpt_path")
+    if not ckpt_path:
+        ckpt_path = getattr(args, "checkpoint_path", None)
+
+    if ckpt_path:
+        return os.path.join(os.path.dirname(ckpt_path), "tests.jsonl")
+    return os.path.join(args.save_dir, "tests.jsonl")
+
+
+def _append_test_record(path, testing_time_sec, metrics):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    record = {
+        "tested_at_utc": datetime.now(timezone.utc).isoformat(),
+        "testing_time_sec": round(float(testing_time_sec), 6),
+        "evaluation_metrics": metrics,
+    }
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -29,6 +57,7 @@ def main() -> None:
         exp_paths = run.get("exp_paths", {})
 
         if args.mode == "both":
+            eval_start = time.perf_counter()
             metrics, test_scores = evaluate_model(
                 trainer=run["trainer"],
                 test_loader=run["test_loader"],
@@ -39,9 +68,14 @@ def main() -> None:
                 pot_init_level=args.pot_init_level,
                 pot_risk=args.pot_risk,
             )
+            testing_time_sec = time.perf_counter() - eval_start
             printable = _to_printable_metrics(metrics)
             print("Evaluation metrics:")
             print(json.dumps(printable, indent=2))
+
+            tests_path = _resolve_tests_jsonl_path(args, run, exp_paths)
+            _append_test_record(tests_path, testing_time_sec, printable)
+            print(f"Test record appended to: {tests_path}")
 
             # Load raw test data for the sensor-overlay panel.
             _, test_data, _ = load_processed_arrays(
@@ -68,11 +102,13 @@ def main() -> None:
                 print(f"  Root: {exp_paths.get('root')}")
                 print(f"  Args: {exp_paths.get('args_path')}")
                 print(f"  Loss: {exp_paths.get('loss_path')}")
+                print(f"  Tests: {exp_paths.get('tests_path')}")
                 print(f"  Model: {exp_paths.get('model_path')}")
                 print(f"  Plots: {exp_paths.get('plots_dir')}")
 
     elif args.mode == "eval":
         run = load_checkpoint_for_eval(args)
+        eval_start = time.perf_counter()
         metrics, test_scores = evaluate_model(
             trainer=run["trainer"],
             test_loader=run["test_loader"],
@@ -83,9 +119,14 @@ def main() -> None:
             pot_init_level=args.pot_init_level,
             pot_risk=args.pot_risk,
         )
+        testing_time_sec = time.perf_counter() - eval_start
         printable = _to_printable_metrics(metrics)
         print("Evaluation metrics:")
         print(json.dumps(printable, indent=2))
+
+        tests_path = _resolve_tests_jsonl_path(args, run, exp_paths={})
+        _append_test_record(tests_path, testing_time_sec, printable)
+        print(f"Test record appended to: {tests_path}")
 
         _, test_data, _ = load_processed_arrays(
             args.processed_dir, args.dataset, args.entity

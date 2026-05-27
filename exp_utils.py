@@ -39,6 +39,7 @@ def create_exp_structure(exp_name: str, base_dir: str = "experiments") -> Dict[s
         experiments/<exp_name>/
         ├── args.json           (all CLI arguments)
         ├── loss.json           (per-epoch loss list)
+        ├── tests.jsonl         (one JSON line per test/eval run)
         ├── model.pt            (checkpoint)
         └── plots/              (subfolder for all plots)
 
@@ -46,7 +47,7 @@ def create_exp_structure(exp_name: str, base_dir: str = "experiments") -> Dict[s
         exp_name: Experiment name (usually from generate_exp_name).
         base_dir: Base directory for all experiments.
     Returns:
-        Dict with keys: 'root', 'args_path', 'loss_path', 'model_path', 'plots_dir'
+        Dict with keys: 'root', 'args_path', 'loss_path', 'tests_path', 'model_path', 'plots_dir'
     """
     exp_root = os.path.join(base_dir, exp_name)
     os.makedirs(exp_root, exist_ok=True)
@@ -58,6 +59,7 @@ def create_exp_structure(exp_name: str, base_dir: str = "experiments") -> Dict[s
         "root": exp_root,
         "args_path": os.path.join(exp_root, "args.json"),
         "loss_path": os.path.join(exp_root, "loss.json"),
+        "tests_path": os.path.join(exp_root, "tests.jsonl"),
         "model_path": os.path.join(exp_root, "model.pt"),
         "plots_dir": plots_dir,
     }
