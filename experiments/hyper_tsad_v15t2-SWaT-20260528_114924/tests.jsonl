@@ -1,0 +1,1 @@
+{"tested_at_utc": "2026-05-28T03:49:47.436576+00:00", "testing_time_sec": 23.168012, "evaluation_metrics": {"threshold": 4.342012, "precision": 0.622222, "recall": 0.497778, "f1": 0.553086, "roc_auc": 0.821091, "pr_auc": 0.510526, "num_samples": 3969, "num_anomalies": 450, "threshold_method": "pot", "pot_init_level": 0.98, "pot_risk": 0.001}}

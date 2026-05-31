@@ -13,6 +13,8 @@ from models.model_prototype_v1 import ModelPrototype
 from models.model_prototype_v1_5 import ModelPrototypeV15
 from models.model_prototype_v1_5t import ModelPrototypeV15T
 from models.model_prototype_v1_5t_1 import ModelPrototypeV15T1
+from models.model_prototype_v1_5t_2 import ModelPrototypeV15T2
+from models.model_prototype_v1_5t_3 import ModelPrototypeV15T3
 from models.tranad import TranADModel
 from trainer.trainer import Trainer
 
@@ -239,6 +241,60 @@ def _build_hyper_tsad_v15t1(args, num_vars: int, train_data: np.ndarray) -> Mode
     )
 
 
+def _build_hyper_tsad_v15t2(args, num_vars: int, train_data: np.ndarray) -> ModelPrototypeV15T2:
+    static_graph = None
+    if args.graph_ablation == "pearson_static":
+        static_graph = build_pearson_static_graph(train_data, args.topk)
+
+    return ModelPrototypeV15T2(
+        num_vars=num_vars,
+        hidden_dim=args.hidden_dim,
+        topk=args.topk,
+        graph_ablation=args.graph_ablation,
+        graph_update_freq=args.graph_update_freq,
+        static_graph=static_graph,
+        graph_similarity_metric=args.graph_similarity_metric,
+        temporal_kernel_size=args.temporal_kernel_size,
+        temporal_num_layers=args.temporal_num_layers,
+        temporal_dropout=args.temporal_dropout,
+        temporal_dilation_base=args.temporal_dilation_base,
+        hypergraph_transformer_heads=args.hypergraph_transformer_heads,
+        hypergraph_transformer_layers=args.hypergraph_transformer_layers,
+        hypergraph_transformer_dropout=args.hypergraph_transformer_dropout,
+        hypergraph_transformer_mlp_ratio=args.hypergraph_transformer_mlp_ratio,
+        hypergraph_transformer_allow_node_to_node=args.hypergraph_transformer_allow_node_to_node,
+        hypergraph_transformer_allow_edge_to_edge=args.hypergraph_transformer_allow_edge_to_edge,
+    )
+
+
+def _build_hyper_tsad_v15t3(args, num_vars: int, train_data: np.ndarray) -> ModelPrototypeV15T3:
+    static_graph = None
+    if args.graph_ablation == "pearson_static":
+        static_graph = build_pearson_static_graph(train_data, args.topk)
+
+    return ModelPrototypeV15T3(
+        num_vars=num_vars,
+        hidden_dim=args.hidden_dim,
+        topk=args.topk,
+        graph_ablation=args.graph_ablation,
+        graph_update_freq=args.graph_update_freq,
+        static_graph=static_graph,
+        graph_similarity_metric=args.graph_similarity_metric,
+        temporal_kernel_size=args.temporal_kernel_size,
+        temporal_num_layers=args.temporal_num_layers,
+        temporal_dropout=args.temporal_dropout,
+        temporal_dilation_base=args.temporal_dilation_base,
+        hypergraph_transformer_heads=args.hypergraph_transformer_heads,
+        hypergraph_transformer_layers=args.hypergraph_transformer_layers,
+        hypergraph_transformer_dropout=args.hypergraph_transformer_dropout,
+        hypergraph_transformer_mlp_ratio=args.hypergraph_transformer_mlp_ratio,
+        hypergraph_transformer_allow_node_to_node=args.hypergraph_transformer_allow_node_to_node,
+        hypergraph_transformer_allow_edge_to_edge=args.hypergraph_transformer_allow_edge_to_edge,
+        hlpe_k=args.hlpe_k,
+        hlpe_scale=args.hlpe_scale,
+    )
+
+
 def build_model(args, num_vars: int, train_data: np.ndarray, device: torch.device):
     if args.model_name == "tranad":
         model = TranADModel(
@@ -264,6 +320,10 @@ def build_model(args, num_vars: int, train_data: np.ndarray, device: torch.devic
         model = _build_hyper_tsad_v15t(args, num_vars, train_data)
     elif args.model_name == "hyper_tsad_v15t1":
         model = _build_hyper_tsad_v15t1(args, num_vars, train_data)
+    elif args.model_name == "hyper_tsad_v15t2":
+        model = _build_hyper_tsad_v15t2(args, num_vars, train_data)
+    elif args.model_name == "hyper_tsad_v15t3":
+        model = _build_hyper_tsad_v15t3(args, num_vars, train_data)
     else:
         model = _build_hyper_tsad(args, num_vars, train_data)
     return model.to(device)
@@ -349,6 +409,8 @@ def save_checkpoint(
             "hypergraph_transformer_mlp_ratio": args.hypergraph_transformer_mlp_ratio,
             "hypergraph_transformer_allow_node_to_node": args.hypergraph_transformer_allow_node_to_node,
             "hypergraph_transformer_allow_edge_to_edge": args.hypergraph_transformer_allow_edge_to_edge,
+            "hlpe_k": args.hlpe_k,
+            "hlpe_scale": args.hlpe_scale,
             "window_size": args.window_size,
             "tranad_d_ff": args.tranad_d_ff,
             "tranad_dropout": args.tranad_dropout,
@@ -554,6 +616,92 @@ def load_checkpoint_for_eval(args):
                     args.hypergraph_transformer_allow_edge_to_edge,
                 )
             ),
+        ).to(device)
+    elif model_name == "hyper_tsad_v15t2":
+        static_graph = None
+        if model_args.get("graph_ablation") == "pearson_static":
+            static_graph = build_pearson_static_graph(train_data, int(model_args.get("topk", 5)))
+
+        model = ModelPrototypeV15T2(
+            num_vars=num_vars,
+            hidden_dim=int(model_args.get("hidden_dim", args.hidden_dim)),
+            topk=int(model_args.get("topk", args.topk)),
+            graph_ablation=model_args.get("graph_ablation", args.graph_ablation),
+            graph_update_freq=int(model_args.get("graph_update_freq", args.graph_update_freq)),
+            static_graph=static_graph,
+            graph_similarity_metric=model_args.get("graph_similarity_metric", args.graph_similarity_metric),
+            temporal_kernel_size=int(model_args.get("temporal_kernel_size", args.temporal_kernel_size)),
+            temporal_num_layers=int(model_args.get("temporal_num_layers", args.temporal_num_layers)),
+            temporal_dropout=float(model_args.get("temporal_dropout", args.temporal_dropout)),
+            temporal_dilation_base=int(model_args.get("temporal_dilation_base", args.temporal_dilation_base)),
+            hypergraph_transformer_heads=int(
+                model_args.get("hypergraph_transformer_heads", args.hypergraph_transformer_heads)
+            ),
+            hypergraph_transformer_layers=int(
+                model_args.get("hypergraph_transformer_layers", args.hypergraph_transformer_layers)
+            ),
+            hypergraph_transformer_dropout=float(
+                model_args.get("hypergraph_transformer_dropout", args.hypergraph_transformer_dropout)
+            ),
+            hypergraph_transformer_mlp_ratio=float(
+                model_args.get("hypergraph_transformer_mlp_ratio", args.hypergraph_transformer_mlp_ratio)
+            ),
+            hypergraph_transformer_allow_node_to_node=bool(
+                model_args.get(
+                    "hypergraph_transformer_allow_node_to_node",
+                    args.hypergraph_transformer_allow_node_to_node,
+                )
+            ),
+            hypergraph_transformer_allow_edge_to_edge=bool(
+                model_args.get(
+                    "hypergraph_transformer_allow_edge_to_edge",
+                    args.hypergraph_transformer_allow_edge_to_edge,
+                )
+            ),
+        ).to(device)
+    elif model_name == "hyper_tsad_v15t3":
+        static_graph = None
+        if model_args.get("graph_ablation") == "pearson_static":
+            static_graph = build_pearson_static_graph(train_data, int(model_args.get("topk", 5)))
+
+        model = ModelPrototypeV15T3(
+            num_vars=num_vars,
+            hidden_dim=int(model_args.get("hidden_dim", args.hidden_dim)),
+            topk=int(model_args.get("topk", args.topk)),
+            graph_ablation=model_args.get("graph_ablation", args.graph_ablation),
+            graph_update_freq=int(model_args.get("graph_update_freq", args.graph_update_freq)),
+            static_graph=static_graph,
+            graph_similarity_metric=model_args.get("graph_similarity_metric", args.graph_similarity_metric),
+            temporal_kernel_size=int(model_args.get("temporal_kernel_size", args.temporal_kernel_size)),
+            temporal_num_layers=int(model_args.get("temporal_num_layers", args.temporal_num_layers)),
+            temporal_dropout=float(model_args.get("temporal_dropout", args.temporal_dropout)),
+            temporal_dilation_base=int(model_args.get("temporal_dilation_base", args.temporal_dilation_base)),
+            hypergraph_transformer_heads=int(
+                model_args.get("hypergraph_transformer_heads", args.hypergraph_transformer_heads)
+            ),
+            hypergraph_transformer_layers=int(
+                model_args.get("hypergraph_transformer_layers", args.hypergraph_transformer_layers)
+            ),
+            hypergraph_transformer_dropout=float(
+                model_args.get("hypergraph_transformer_dropout", args.hypergraph_transformer_dropout)
+            ),
+            hypergraph_transformer_mlp_ratio=float(
+                model_args.get("hypergraph_transformer_mlp_ratio", args.hypergraph_transformer_mlp_ratio)
+            ),
+            hypergraph_transformer_allow_node_to_node=bool(
+                model_args.get(
+                    "hypergraph_transformer_allow_node_to_node",
+                    args.hypergraph_transformer_allow_node_to_node,
+                )
+            ),
+            hypergraph_transformer_allow_edge_to_edge=bool(
+                model_args.get(
+                    "hypergraph_transformer_allow_edge_to_edge",
+                    args.hypergraph_transformer_allow_edge_to_edge,
+                )
+            ),
+            hlpe_k=int(model_args.get("hlpe_k", args.hlpe_k)),
+            hlpe_scale=float(model_args.get("hlpe_scale", args.hlpe_scale)),
         ).to(device)
     else:
         static_graph = None

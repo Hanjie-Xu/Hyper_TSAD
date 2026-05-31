@@ -220,3 +220,5 @@ __marimo__/
 # large data files
 data/
 *.pt
+bib/
+*.pdf

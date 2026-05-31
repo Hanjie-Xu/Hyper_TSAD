@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model_name",
         type=str,
         default="hyper_tsad",
-        choices=["hyper_tsad", "hyper_tsad_v15", "hyper_tsad_v15t", "hyper_tsad_v15t1", "tranad", "anomaly_transformer"],
+        choices=["hyper_tsad", "hyper_tsad_v15", "hyper_tsad_v15t", "hyper_tsad_v15t1", "hyper_tsad_v15t2", "hyper_tsad_v15t3", "tranad", "anomaly_transformer"],
         help="Model family to train/evaluate.",
     )
 
@@ -80,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Allow node-to-node attention in hypergraph transformer.")
     parser.add_argument("--hypergraph_transformer_allow_edge_to_edge", action="store_true", default=False,
                         help="Allow hyperedge-to-hyperedge attention in hypergraph transformer.")
+    parser.add_argument("--hlpe_k", type=int, default=8,
+                        help="Number of smallest hypergraph Laplacian eigenvectors used as HLPE in hyper_tsad_v15t3.")
+    parser.add_argument("--hlpe_scale", type=float, default=1.0,
+                        help="Scale factor for adding projected HLPE to node features in hyper_tsad_v15t3.")
 
     # TranAD baseline params
     parser.add_argument("--tranad_d_ff", type=int, default=256)
